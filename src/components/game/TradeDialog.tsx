@@ -51,11 +51,24 @@ export function TradeDialog({ gameState, open, onOpenChange, onTrade }: TradeDia
                                 <SelectValue placeholder="Select trade partner" />
                             </SelectTrigger>
                             <SelectContent>
-                                {gameState.players.filter(p => p.id !== humanity.id).map(p => (
-                                    <SelectItem key={p.id} value={p.id}>
-                                        {p.name} (Cards: {p.properties.length}, Cash: ${p.money})
-                                    </SelectItem>
-                                ))}
+                                {gameState.players
+                                    .filter(p => p.id !== humanity.id)
+                                    .map(p => {
+                                        const isBlacklisted = humanity.tradeBlacklist?.includes(p.id);
+                                        const isBankrupt = p.isBankrupt;
+                                        return (
+                                            <SelectItem 
+                                                key={p.id} 
+                                                value={p.id} 
+                                                disabled={isBlacklisted || isBankrupt}
+                                            >
+                                                {p.name} 
+                                                {isBankrupt ? " (Bankrupt)" : 
+                                                 isBlacklisted ? " (Refuses Deals)" : 
+                                                 ` (Cards: ${p.properties.length}, Cash: $${p.money})`}
+                                            </SelectItem>
+                                        );
+                                })}
                             </SelectContent>
                         </Select>
                     </div>

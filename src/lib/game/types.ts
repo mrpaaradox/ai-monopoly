@@ -37,6 +37,9 @@ export interface Player {
   properties: number[]; // Array of Tile IDs
   isAI: boolean;
   messages: string[]; // Chat history for this player
+  bailoutCount: number;
+  tradeBlacklist?: string[]; // IDs of players who rejected trades from this player
+  isBankrupt?: boolean;
 }
 
 export interface GameState {
@@ -53,4 +56,12 @@ export interface GameState {
   lastDrawnCard?: { text: string; type: 'CHANCE' | 'COMMUNITY_CHEST' };
   lastRentPayment?: { payerId: string; payeeId: string; amount: number };
   lastJailFine?: { payerId: string; amount: number };
+  pendingTrade?: { 
+    initiatorId: string; 
+    targetId: string; 
+    offer: number; 
+    propertyId: number; 
+    offeringPropertyId: number | null; 
+  };
+  pendingBailout?: { playerId: string };
 }

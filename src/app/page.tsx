@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useReducer, useState } from "react";
-import { createInitialState, rollDice, buyProperty, skipBuy, nextTurn, buildHouse, payJailFine } from "@/lib/game/engine";
+import { createInitialState, rollDice, buyProperty, skipBuy, nextTurn, buildHouse, payJailFine, executeTrade } from "@/lib/game/engine";
 
 import { GameState } from "@/lib/game/types";
 import { Board } from "@/components/game/Board";
@@ -9,6 +9,9 @@ import { GameOverlay } from "@/components/game/GameOverlay";
 import { TradeDialog } from "@/components/game/TradeDialog";
 import { SetupDialog } from "@/components/game/SetupDialog";
 import { CardDrawOverlay } from "@/components/game/CardDrawOverlay";
+import { IncomingTradeDialog } from "@/components/game/IncomingTradeDialog";
+import { BailoutDialog } from "@/components/game/BailoutDialog";
+import { WinnerDialog } from "@/components/game/WinnerDialog";
 
 // Reducer to handle state transitions
 type Action = 
@@ -18,10 +21,15 @@ type Action =
   | { type: 'PASS' }
   | { type: 'NEXT' }
   | { type: 'BUILD'; propertyId: number }
-  | { type: 'TRADE'; targetPlayerId: string; offer: number; propertyId: number; offeringPropertyId: number | null }
+  | { type: 'TRADE'; initiatorId: string; targetPlayerId: string; offer: number; propertyId: number; offeringPropertyId: number | null }
+  | { type: 'RESOLVE_TRADE'; accepted: boolean; isCounter?: boolean }
   | { type: 'DISMISS_POPUP' }
   | { type: 'CHAT'; sender: string; message: string; color: string }
-  | { type: 'PAY_JAIL_FINE' };
+  | { type: 'PAY_JAIL_FINE' }
+
+  | { type: 'REQUEST_BAILOUT'; playerId: string }
+  | { type: 'RESOLVE_BAILOUT'; accepted: boolean }
+  | { type: 'BANKRUPTCY'; playerId: string };
 
 const gameReducer = (state: GameState | null, action: Action): GameState | null => {
   switch (action.type) {
@@ -31,89 +39,227 @@ const gameReducer = (state: GameState | null, action: Action): GameState | null 
     case 'PASS': return state ? skipBuy(state) : null;
     case 'BUILD': return state ? buildHouse(state, action.propertyId) : null;
     case 'PAY_JAIL_FINE': return state ? payJailFine(state) : null;
+    case 'BANKRUPTCY': {
+        if (!state) return null;
+        const bankruptPlayer = state.players.find(p => p.id === action.playerId);
+        if (!bankruptPlayer) return state;
+
+        // Reset properties of bankrupt player
+        const updatedBoard = state.board.map(t => {
+            if (t.ownerId === bankruptPlayer.id) {
+                return { ...t, ownerId: undefined, houses: 0 };
+            }
+            return t;
+        });
+
+        const updatedPlayers = state.players.map(p => {
+             if (p.id === bankruptPlayer.id) {
+                 return { ...p, money: 0, isJailed: false, position: 0, properties: [], isBankrupt: true }; 
+             }
+             return p;
+        });
+        
+        return {
+            ...state,
+            players: updatedPlayers,
+            board: updatedBoard,
+            logs: [...state.logs, `${bankruptPlayer.name} declared bankruptcy!`],
+            chat: [...state.chat, { sender: 'System', message: `${bankruptPlayer.name} has gone bankrupt and is disqualified!`, color: '#ef4444' }]
+        };
+    }
+
+    case 'REQUEST_BAILOUT': {
+         if (!state) return null;
+         return { ...state, pendingBailout: { playerId: action.playerId } };
+    }
+
+    case 'RESOLVE_BAILOUT': {
+        if (!state || !state.pendingBailout) return state;
+        const player = state.players.find(p => p.id === state.pendingBailout!.playerId);
+        if (!player) return { ...state, pendingBailout: undefined };
+        
+        if (action.accepted) {
+            // Bailout logic
+            const updatedPlayers = state.players.map(p => {
+                if (p.id === player.id) {
+                    return { ...p, money: 500, bailoutCount: (p.bailoutCount || 0) + 1 };
+                }
+                return p;
+            });
+            return {
+                ...state,
+                players: updatedPlayers,
+                pendingBailout: undefined,
+                chat: [...state.chat, { sender: 'System', message: `${player.name} was bailed out! Recieved $500 stimulus. (${(player.bailoutCount || 0) + 1}/3)`, color: '#22c55e' }]
+            };
+        } else {
+            // Rejected, proceed to Bankruptcy in next step or trigger it?
+            // Since we can't dispatch inside reducer, we rely on the component or just assume rejection leads to bankruptcy manually.
+            // But wait, if we are in this state, we need to transition. 
+            // We can handle the "Bankrupt Effect" here directly or rely on a subsequent dispatch.
+            // Let's handle it here to be safe, essentially calling the BANKRUPTCY logic (duplicating it slightly or abstracting it).
+            // Actually, best to return state where pendingBailout is clear, and maybe a flag or just let the loop re-check?
+            // If we clear pendingBailout, the loop might re-trigger REQUEST_BAILOUT if we don't disqualify.
+            // So we MUST disqualify here if rejected.
+            
+            // Re-using Bankruptcy Logic
+             const updatedBoard = state.board.map(t => {
+                if (t.ownerId === player.id) {
+                    return { ...t, ownerId: undefined, houses: 0 };
+                }
+                return t;
+            });
+
+            const updatedPlayers = state.players.map(p => {
+                 if (p.id === player.id) {
+                     return { ...p, money: 0, isJailed: false, position: 0, properties: [], isBankrupt: true }; 
+                 }
+                 return p;
+            });
+
+            return {
+                ...state,
+                players: updatedPlayers,
+                board: updatedBoard,
+                pendingBailout: undefined,
+                logs: [...state.logs, `${player.name} was denied bailout and declared bankruptcy!`],
+                chat: [...state.chat, { sender: 'System', message: `${player.name} denied bailout. Disqualified.`, color: '#ef4444' }]
+            };
+        }
+    }
+
+    case 'RESOLVE_TRADE': {
+        if (!state) return null;
+        if (!action.accepted) {
+            // Rejected
+            const trade = state.pendingTrade;
+            if (!trade) return { ...state, pendingTrade: undefined };
+            
+            // If Countering, we don't blacklist and don't send rejection msg
+            if (action.isCounter) {
+                return { ...state, pendingTrade: undefined };
+            }
+
+            const initiator = state.players.find(p => p.id === trade.initiatorId);
+            const randomMsg = ["Rejected.", "No deal.", "Maybe next time."];
+            return { 
+                ...state, 
+                pendingTrade: undefined,
+                players: state.players.map(p => {
+                    // Initiator gets blocked from asking Target again (unless it was a counter, handled above)
+                    if (p.id === initiator?.id) {
+                         return { 
+                             ...p, 
+                             tradeBlacklist: [...(p.tradeBlacklist || []), trade.targetId] 
+                         };
+                    }
+                    return p;
+                }),
+                chat: initiator ? [...state.chat, { sender: 'Human', message: randomMsg[Math.floor(Math.random() * randomMsg.length)], color: '#fff' }] : state.chat
+            };
+        }
+        // Accepted
+        if (!state.pendingTrade) return state;
+        return executeTrade(state, state.pendingTrade);
+    }
     case 'TRADE': 
         if (!state) return null;
-        // Logic for specialized trade: P0 requests targetProp from Target for (OfferMoney + OfferingProp)
         const target = state.players.find(p => p.id === action.targetPlayerId);
-        const player = state.players[0]; // Human
+        const initiator = state.players.find(p => p.id === action.initiatorId);
         const targetProp = state.board.find(t => t.id === action.propertyId);
         const offeringProp = action.offeringPropertyId ? state.board.find(t => t.id === action.offeringPropertyId) : null;
         
-        if (!target || !targetProp || !player) return state;
+        if (!target || !targetProp || !initiator) return state;
+
+        // If Target is Human (Players[0]), we do NOT execute. We queue it.
+        // Unless Initiator is Human (handled by TradeDialog usually, but if Human trades with Human? Not supported yet)
+        // Initiator: AI, Target: Human
+        if (!target.isAI && initiator.isAI) {
+             return {
+                 ...state,
+                 pendingTrade: {
+                     initiatorId: action.initiatorId,
+                     targetId: action.targetPlayerId,
+                     offer: action.offer,
+                     propertyId: action.propertyId,
+                     offeringPropertyId: action.offeringPropertyId
+                 }
+             };
+        }
         
         let accepted = false;
         
-        // AI Logic Valuation
-        const targetValue = (targetProp.price || 0) * 1.5; 
+        const targetValue = (targetProp.price || 0);
         
         let offerValue = action.offer;
         if (offeringProp) {
             offerValue += (offeringProp.price || 0); 
             const group = offeringProp.group;
             const aiPropsInGroup = target.properties.filter(pid => state.board[pid].group === group).length;
-             if (aiPropsInGroup > 0) offerValue += 100;
+             if (aiPropsInGroup > 0) offerValue += 100; // Bonus if it completes/helps group
         }
 
-        if (offerValue >= targetValue) {
+        // Trading Logic Strategy 
+        // Rule: "Models can't ask for more than 20%". We interpret this as acceptable offer cap.
+        const minimumAcceptance = targetValue * 1.2;
+        
+        if (offerValue >= minimumAcceptance) {
              accepted = true;
         }
 
+        // AI vs AI check
+        if (initiator.isAI && target.isAI) {
+             if (offerValue >= targetValue) accepted = true;
+        }
+
         if (accepted) {
-             if (player.money < action.offer) {
+             if (initiator.money < action.offer) {
                  return { ...state, chat: [...state.chat, { sender: 'System', message: 'Trade failed: Insufficient funds.', color: '#999' }] };
              }
-             
-             const newHumanMoney = player.money - action.offer;
-             const newTargetMoney = target.money + action.offer;
-             
-             let newHumanProps = [...player.properties, targetProp.id];
-             let newTargetProps = target.properties.filter(id => id !== targetProp.id);
-
-             if (offeringProp) {
-                 newHumanProps = newHumanProps.filter(id => id !== offeringProp.id);
-                 newTargetProps = [...newTargetProps, offeringProp.id];
-             }
-             
-             const updatedHuman = { ...player, money: newHumanMoney, properties: newHumanProps };
-             const updatedTarget = { ...target, money: newTargetMoney, properties: newTargetProps };
-             
-             const updatedTargetProp = { ...targetProp, ownerId: player.id };
-             const updatedOfferingProp = offeringProp ? { ...offeringProp, ownerId: target.id } : null;
-             
-             const updatedPlayers = state.players.map(p => {
-                 if (p.id === player.id) return updatedHuman;
-                 if (p.id === target.id) return updatedTarget;
-                 return p;
+             return executeTrade(state, { 
+                 initiatorId: action.initiatorId, 
+                 targetId: action.targetPlayerId, 
+                 offer: action.offer, 
+                 propertyId: action.propertyId, 
+                 offeringPropertyId: action.offeringPropertyId 
              });
-             
-             const updatedBoard = state.board.map(t => {
-                 if (t.id === targetProp.id) return updatedTargetProp;
-                 if (updatedOfferingProp && t.id === updatedOfferingProp.id) return updatedOfferingProp;
-                 return t;
-             });
-             
-             const msg = offeringProp 
-                ? `Deal accepted! Swapped ${targetProp.name} for ${offeringProp.name} + $${action.offer}.`
-                : `Deal accepted! I sold ${targetProp.name} for $${action.offer}.`;
-
-             return { 
-                 ...state, 
-                 players: updatedPlayers, 
-                 board: updatedBoard,
-                 chat: [...state.chat, { sender: target.name, message: msg, color: target.color }] 
-             };
         } else {
-             // Counter Offer Logic
-             const counterOffer = Math.floor(targetValue * 1.1); // AI wants 10% premium
+             // Rejection Logic
+             if (initiator.isAI && target.isAI) {
+                 // Block this AI from asking that AI again
+                 const updatedPlayers = state.players.map(p => {
+                     if (p.id === initiator.id) {
+                         return { ...p, tradeBlacklist: [...(p.tradeBlacklist || []), target.id] };
+                     }
+                     return p;
+                 });
+                 return { ...state, players: updatedPlayers };
+             } 
+
              const rejectMsg = [
-                 `I can't accept that. How about $${counterOffer}?`,
-                 `Too low! I'd consider $${counterOffer}.`,
-                 `Your offer is insulting. Bring me $${counterOffer} and we'll talk.`,
-                 `No deal. I value this at $${counterOffer}.`
+                 `I can't accept that.`,
+                 `Too low for ${targetProp.name}.`,
+                 `I want to keep this property.`,
+                 `No deal.`
              ];
              const randomMsg = rejectMsg[Math.floor(Math.random() * rejectMsg.length)];
              
-             return { ...state, chat: [...state.chat, { sender: target.name, message: randomMsg, color: target.color }] };
+             // Update initiator (which is human if we are here usually, but actually logic is shared)
+             // If Initiator is Human, we block them from asking Target again?
+             // "that person can't send a trade deal to that person again"
+             // Yes, so if Human asks AI and AI rejects, Human is blocked from asking AI again.
+             const updatedPlayers = state.players.map(p => {
+                 if (p.id === initiator.id) {
+                     return { ...p, tradeBlacklist: [...(p.tradeBlacklist || []), target.id] };
+                 }
+                 return p;
+             });
+
+             return { 
+                 ...state, 
+                 players: updatedPlayers,
+                 chat: [...state.chat, { sender: target.name, message: randomMsg, color: target.color }] 
+             };
         }
 
     case 'NEXT': return state ? nextTurn(state) : null;
@@ -133,6 +279,7 @@ export default function Home() {
   // Initialize with null
   const [gameState, dispatch] = useReducer(gameReducer, null);
   const [mounted, setMounted] = useState(false);
+  const [isTradeOpen, setIsTradeOpen] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setMounted(true), 100);
@@ -200,6 +347,9 @@ export default function Home() {
     // ... logic ...
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
     if (!currentPlayer.isAI || gameState.winner) return;
+    
+    // STALL: If trade is pending or bailout is pending or trade menu is open, pause AI.
+    if (gameState.pendingTrade || gameState.pendingBailout || isTradeOpen) return;
 
     // ... (rest of AI loop) ...
      const timer = setTimeout(() => {
@@ -223,28 +373,95 @@ export default function Home() {
                      dispatch({ type: 'PASS' });
                      dispatch({ type: 'CHAT', sender: currentPlayer.name, message: `Passing on ${tile.name} for now. too pricey.`, color: currentPlayer.color });
                 }
-            } else if (tile.ownerId && tile.ownerId !== currentPlayer.id) {
-                 // Paying rent is automatic in engine landing, so logic here just passes turn usually? 
-                 // Wait, Phase ACTION means user choice. If owned, engine moves to END_TURN automatically usually, 
-                 // UNLESS it was buyable. 
-                 // If we are in ACTION, it means it IS buyable or unowned.
-                 // If owned, handleTileLanding sets phase to ROLL/END_TURN.
-                 // So we shouldn't be in ACTION if it's owned generally? 
-                 // Ah, if we land on owned property, we pay rent immediately in handleTileLanding.
-                 // So ACTION phase is exclusively for Buying decisions for Unowned properties.
-                 // So the else if case here is technically unreachable for owned props, 
-                 // BUT let's keep it for safety or Auction. 
-                 dispatch({ type: 'PASS' });
             } else {
                  dispatch({ type: 'PASS' });
             }
         } else if (gameState.gamePhase === 'END_TURN') {
-            // ... Build logic ...
+            // Check Bankruptcy
+            // Check Bankruptcy
+            if (currentPlayer.money < 200) {
+                 if (currentPlayer.isAI && (currentPlayer.bailoutCount || 0) < 3) {
+                     // Request Bailout
+                     // Only request if not already requested effectively (though Phase usually blocks duplicates if we change phase, but we aren't changing phase)
+                     // Effectively, we need to check if pendingBailout is already set
+                     if (!gameState.pendingBailout) {
+                        dispatch({ type: 'REQUEST_BAILOUT', playerId: currentPlayer.id });
+                     }
+                     // Pause loop until resolved
+                     return;
+                 } else {
+                     dispatch({ type: 'BANKRUPTCY', playerId: currentPlayer.id });
+                     dispatch({ type: 'NEXT' });
+                     return;
+                 }
+            }
+
+            // Anti-Loop: Check if we just got rejected in trade
+            const lastMsg = gameState.chat[gameState.chat.length - 1];
+            // If last message was a rejection (heuristic based on strings in reducer)
+            if (lastMsg && (
+                lastMsg.message.includes("No deal") || 
+                lastMsg.message.includes("can't accept") ||
+                lastMsg.message.includes("Too low")
+            )) {
+                // Determine if it was directed at us? 
+                // Implicitly yes, since we are the active player in END_TURN loop.
+                dispatch({ type: 'NEXT' });
+                return;
+            }
+
+            // AI Trading Logic: Try to complete sets
             const ownedProps = currentPlayer.properties.map(id => gameState.board[id]);
             const groups = [...new Set(ownedProps.map(p => p.group).filter(g => g))];
             
-            let built = false;
+            let traded = false;
             for (const group of groups) {
+                 if (!group) continue;
+                 const groupProps = gameState.board.filter(t => t.group === group);
+                 const ownedInGroup = groupProps.filter(t => t.ownerId === currentPlayer.id);
+                 const missingInGroup = groupProps.filter(t => t.ownerId !== currentPlayer.id);
+                 
+                 // If we have some, try to get the rest
+                 if (ownedInGroup.length > 0 && missingInGroup.length > 0) {
+                      for (const targetProp of missingInGroup) {
+                           if (!targetProp.ownerId) continue; // Unowned, can't trade (buy phase mostly)
+                           const owner = gameState.players.find(p => p.id === targetProp.ownerId);
+                           if (!owner || owner.id === currentPlayer.id) continue;
+                           
+                           // Check Blacklist
+                           if (currentPlayer.tradeBlacklist?.includes(owner.id)) continue;
+
+                           // Propose Trade
+                           // Logic: "Models can't ask for more than 20% of the house price". 
+                           // We interpret as: The VALUE we offer shouldn't be too crazy high/low? 
+                           // Or ASK logic. Here we are Inititator. We are "Asking" for `targetProp`. 
+                           // We offer Money. 
+                           // Limiting the "Ask": Maybe we can't ask for properties that are too expensive if we don't offer enough?
+                           // Let's implement reasonable offer.
+                           // Offer = Property Price * 1.1 to 1.2
+                           const offerAmount = Math.floor((targetProp.price || 0) * 1.1);
+                           
+                           // Constraint: Cap at 20% markup if that's the rule
+                           const maxOffer = (targetProp.price || 0) * 1.2;
+                           const currentOffer = Math.min(offerAmount, maxOffer);
+
+                           if (currentPlayer.money >= currentOffer + 50) {
+                                dispatch({ type: 'TRADE', initiatorId: currentPlayer.id, targetPlayerId: owner.id, offer: currentOffer, propertyId: targetProp.id, offeringPropertyId: null });
+                                traded = true;
+                                break;
+                           }
+                      }
+                 }
+                 if (traded) break;
+            }
+
+
+            // Build Logic
+            const updatedOwnedProps = currentPlayer.properties.map(id => gameState.board[id]);
+            const updatedGroups = [...new Set(updatedOwnedProps.map(p => p.group).filter(g => g))];
+            
+            let built = false;
+            for (const group of updatedGroups) {
                 if (!group) continue;
                 const groupProps = gameState.board.filter(t => t.group === group);
                 const hasMonopoly = groupProps.every(t => t.ownerId === currentPlayer.id);
@@ -253,9 +470,10 @@ export default function Home() {
                     for (const prop of groupProps) {
                         // Strict check: Must be PROPERTY and have a valid houseCost > 0
                         if (prop.type === 'PROPERTY' && (prop.houseCost || 0) > 0) {
-                            if (currentPlayer.money > (prop.houseCost || 0) + 200 && (prop.houses || 0) < 5) {
+                             // Aggressively build if we have monopoly. Keep only $100 buffer.
+                            if (currentPlayer.money > (prop.houseCost || 0) + 100 && (prop.houses || 0) < 5) {
                                 dispatch({ type: 'BUILD', propertyId: prop.id });
-                                dispatch({ type: 'CHAT', sender: currentPlayer.name, message: `Developing ${prop.name} with new infrastructure.`, color: currentPlayer.color });
+                                dispatch({ type: 'CHAT', sender: currentPlayer.name, message: `Building a house on ${prop.name}. Monopoly power!`, color: currentPlayer.color });
                                 built = true;
                                 break; 
                             }
@@ -265,15 +483,15 @@ export default function Home() {
                 if (built) break;
             }
 
-            if (!built) {
+            if (!built && !traded) {
                 dispatch({ type: 'NEXT' });
             } 
         }
     }, AI_DELAY);
     return () => clearTimeout(timer);
-  }, [gameState, setupComplete]);
+  }, [gameState, setupComplete, isTradeOpen]);
 
-  const [isTradeOpen, setIsTradeOpen] = useState(false);
+
   
   // Custom Reducer with replacement capability
   // Actually, standard reducer with INIT action is cleaner.
@@ -341,7 +559,40 @@ export default function Home() {
             gameState={gameState} 
             open={isTradeOpen} 
             onOpenChange={setIsTradeOpen}
-            onTrade={(targetId, offer, propId, offPropId) => dispatch({ type: 'TRADE', targetPlayerId: targetId, offer, propertyId: propId, offeringPropertyId: offPropId })}
+            onTrade={(targetId, offer, propId, offPropId) => dispatch({ type: 'TRADE', initiatorId: gameState.players[0].id, targetPlayerId: targetId, offer, propertyId: propId, offeringPropertyId: offPropId })}
+          />
+          
+          <IncomingTradeDialog 
+              gameState={gameState}
+              onAccept={() => dispatch({ type: 'RESOLVE_TRADE', accepted: true })}
+              onReject={() => dispatch({ type: 'RESOLVE_TRADE', accepted: false })}
+              onCounter={() => {
+                  // Pass isCounter=true to suppress "No Deal" and Blacklist
+                  dispatch({ type: 'RESOLVE_TRADE', accepted: false, isCounter: true }); 
+                  setIsTradeOpen(true); // Open general trade dialog
+                  // Note: Ideally we'd pre-select the AI player
+              }}
+          />
+
+          <BailoutDialog 
+            gameState={gameState} 
+            onAccept={() => {
+                dispatch({ type: 'RESOLVE_BAILOUT', accepted: true });
+                // We need to tell AI to continue turning? 
+                // AI loop depends on gamePhase. If we just updated money, AI loop will re-run and see money > 200 and proceed.
+            }}
+            onReject={() => {
+                dispatch({ type: 'RESOLVE_BAILOUT', accepted: false });
+                dispatch({ type: 'NEXT' }); // End their turn after disqualification
+            }}
+          />
+
+          <WinnerDialog 
+             gameState={gameState} 
+             onReset={() => {
+                 setSetupComplete(false); // Go back to setup
+                 // dispatch({ type: 'INIT_GAME', payload: ... }) will happen in handleStart
+             }} 
           />
         </>
       )}
