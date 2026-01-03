@@ -19,6 +19,9 @@ export const createInitialState = (playerNames: string[]): GameState => {
     properties: [],
     isAI: index > 0, // First player is Human, others AI for now
     messages: [],
+    bailoutCount: 0,
+    tradeBlacklist: [],
+    isBankrupt: false,
   }));
 
   return {
@@ -167,9 +170,10 @@ const handleTileLanding = (state: GameState, player: Player): GameState => {
   }
 
   if (tile.type === 'TAX') {
-    const taxedPlayer = { ...player, money: player.money - (tile.price || 0) };
+    const taxAmount = Math.min(tile.price || 0, Math.max(0, player.money)); // Cap tax
+    const taxedPlayer = { ...player, money: player.money - taxAmount };
     newState.players = newState.players.map(p => p.id === player.id ? taxedPlayer : p);
-    newState.logs.push(`${player.name} paid $${tile.price} tax.`);
+    newState.logs.push(`${player.name} paid $${taxAmount} tax.`);
     newState.gamePhase = state.isDoubles ? 'ROLL' : 'END_TURN';
   }
   
@@ -208,7 +212,8 @@ const handleTileLanding = (state: GameState, player: Player): GameState => {
                   const t = state.board[pid];
                   return acc + (t.houses || 0) * (card.amount || 0);
               }, 0);
-              const repairedPlayer = { ...player, money: player.money - repairCost };
+              const actualCost = Math.min(repairCost, Math.max(0, player.money)); // Cap repairs
+              const repairedPlayer = { ...player, money: player.money - actualCost };
               newState.players = newState.players.map(p => p.id === player.id ? repairedPlayer : p);
               newState.logs.push(`${player.name} paid $${repairCost} for repairs.`);
               newState.gamePhase = state.isDoubles ? 'ROLL' : 'END_TURN';
@@ -300,11 +305,15 @@ const payRent = (state: GameState, player: Player, tile: Tile): GameState => {
     
     // Transfer money
     const owner = state.players.find(p => p.id === tile.ownerId)!;
-    const newPlayerMoney = player.money - rent;
-    const newOwnerMoney = owner.money + rent;
+    // Cap payment at what the player has
+    const paymentAmount = Math.min(rent, Math.max(0, player.money));
     
-    // If player goes bankrupt (negative money), logic needed. For now just allow negative.
+    const newPlayerMoney = player.money - paymentAmount;
+    const newOwnerMoney = owner.money + paymentAmount;
     
+    // If player goes negative (or hits 0 from positive), they might face bankruptcy next check.
+    // If they were already at 0, paymentAmount is 0, so no change.
+
     // AI Chat Reaction
     if (player.isAI && rent > 50) {
         const msgs = [`Ouch! $${rent}?`, `There goes my savings to ${owner.name}.`, "Rent is too high!", "Just take my money."];
@@ -324,7 +333,7 @@ const payRent = (state: GameState, player: Player, tile: Tile): GameState => {
     return { 
         ...state, 
         players: updatedPlayers,
-        lastRentPayment: { payerId: player.id, payeeId: owner.id, amount: rent }
+        lastRentPayment: { payerId: player.id, payeeId: owner.id, amount: paymentAmount }
     };
 }
 
@@ -360,7 +369,8 @@ export const buyProperty = (state: GameState): GameState => {
 export const buildHouse = (state: GameState, propertyId: number): GameState => {
     // Only allowed in ACTION or END_TURN? Usually any time on your turn.
     // We'll restrict to ACTION/END_TURN for simplicity.
-    if (state.gamePhase === 'ROLL') return state;
+    // Allowed anytime on your turn.
+    // if (state.gamePhase === 'ROLL') return state; // Removed restriction
 
     const player = state.players[state.currentPlayerIndex];
     const tile = state.board[propertyId];
@@ -407,11 +417,38 @@ export const skipBuy = (state: GameState): GameState => {
 }
 
 export const nextTurn = (state: GameState): GameState => {
-    if (state.gamePhase !== 'END_TURN') return state;
+    let nextIndex = (state.currentPlayerIndex + 1) % state.players.length;
+    let attempts = 0;
     
-    const nextIndex = (state.currentPlayerIndex + 1) % state.players.length;
+    // Skip bankrupt players
+    while (state.players[nextIndex].isBankrupt && attempts < state.players.length) {
+        nextIndex = (nextIndex + 1) % state.players.length;
+        attempts++;
+    }
+
+    // Check win condition
+    const activePlayers = state.players.filter(p => !p.isBankrupt);
+    if (activePlayers.length === 1) {
+         return { ...state, winner: activePlayers[0].id, logs: [...state.logs, `${activePlayers[0].name} WINS THE GAME!`] };
+    }
+
+    // Clear trade blacklists for the new turn (or should it be per player turn? User says "once the dice is rolled refusal turns down to 0". 
+    // Dice roll happens AFTER nextTurn usually or AS PART of it? 
+    // "Once the dice is rolled". But physically we are starting a NEW turn here.
+    // If Player A refused Player B. Player B ends turn. Player C plays. Player A plays. 
+    // Usually "one turn" means "until the next chance to trade" or "until the *refuser's* next turn"? 
+    // Or "until the *requester's* next turn"?
+    // "refusal stays just valid for one turn". 
+    // Simplest interpretation: Clear ALL blacklists at start of ANY new turn.
+    // This allows re-asking continuously.
+    // Let's implement: Clear tradeBlacklist for EVERYONE when `nextTurn` is called.
+    
+    const updatedPlayers = state.players.map(p => ({ ...p, tradeBlacklist: [] }));
+
+    // Attempt to clear transient state
     return {
         ...state,
+        players: updatedPlayers,
         currentPlayerIndex: nextIndex,
         isDoubles: false,
         doublesCount: 0,
@@ -441,3 +478,54 @@ export const payJailFine = (state: GameState): GameState => {
 
     return { ...state, players: updatedPlayers, lastJailFine: { payerId: player.id, amount: 50 }, lastDrawnCard: undefined, lastRentPayment: undefined };
 };
+
+export const executeTrade = (state: GameState, trade: { initiatorId: string, targetId: string, offer: number, propertyId: number, offeringPropertyId: number | null }): GameState => {
+    const initiator = state.players.find(p => p.id === trade.initiatorId);
+    const target = state.players.find(p => p.id === trade.targetId);
+    const targetProp = state.board.find(t => t.id === trade.propertyId);
+    const offeringProp = trade.offeringPropertyId ? state.board.find(t => t.id === trade.offeringPropertyId) : null;
+
+    if (!initiator || !target || !targetProp) return state;
+
+    // Execute Transfer
+    const newInitiatorMoney = initiator.money - trade.offer;
+    const newTargetMoney = target.money + trade.offer;
+             
+    let newInitiatorProps = [...initiator.properties, targetProp.id];
+    let newTargetProps = target.properties.filter(id => id !== targetProp.id);
+
+    if (offeringProp) {
+        newInitiatorProps = newInitiatorProps.filter(id => id !== offeringProp.id);
+        newTargetProps = [...newTargetProps, offeringProp.id];
+    }
+             
+    const updatedInitiator = { ...initiator, money: newInitiatorMoney, properties: newInitiatorProps };
+    const updatedTarget = { ...target, money: newTargetMoney, properties: newTargetProps };
+             
+    const updatedTargetProp = { ...targetProp, ownerId: initiator.id };
+    const updatedOfferingProp = offeringProp ? { ...offeringProp, ownerId: target.id } : null;
+             
+    const updatedPlayers = state.players.map(p => {
+        if (p.id === initiator.id) return updatedInitiator;
+        if (p.id === target.id) return updatedTarget;
+        return p;
+    });
+             
+    const updatedBoard = state.board.map(t => {
+        if (t.id === targetProp.id) return updatedTargetProp;
+        if (updatedOfferingProp && t.id === updatedOfferingProp.id) return updatedOfferingProp;
+        return t;
+    });
+             
+    const msg = offeringProp 
+        ? `${initiator.name} traded ${offeringProp.name} + $${trade.offer} for ${targetProp.name} from ${target.name}.`
+        : `${initiator.name} bought ${targetProp.name} from ${target.name} for $${trade.offer}.`;
+
+    return { 
+        ...state, 
+        players: updatedPlayers, 
+        board: updatedBoard,
+        chat: [...state.chat, { sender: 'System', message: msg, color: '#aaa' }],
+        pendingTrade: undefined // Clear pending if any
+    };
+}

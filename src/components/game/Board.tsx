@@ -79,12 +79,17 @@ export function Board({ gameState, onBuild }: BoardProps) {
            {/* Popover Logic */}
            <Popover>
             <PopoverTrigger asChild>
-                <div className="w-full h-full cursor-pointer hover:z-50 hover:scale-105 transition-transform duration-200">
+                <div className="w-full h-full cursor-pointer hover:z-50 hover:scale-105 transition-transform duration-200 relative">
                     <TileComponent 
                         tile={tile} 
                         players={playersHere} 
                         className="w-full h-full border border-slate-300 dark:border-slate-800 shadow-sm"
                     />
+                    {isOwner && isCurrentPlayer && canBuild && (
+                        <div className="absolute -top-1 -right-1 z-10 w-4 h-4 rounded-full bg-green-500 text-white flex items-center justify-center shadow-sm animate-bounce">
+                            <Zap className="w-2.5 h-2.5 fill-current" />
+                        </div>
+                    )}
                 </div>
             </PopoverTrigger>
             {/* ... Popover Content ... */}
