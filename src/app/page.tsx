@@ -276,6 +276,7 @@ export default function Home() {
   const [selectedAIModels, setSelectedAIModels] = useState<string[]>([]);
   const [groqApiKey, setGroqApiKey] = useState<string>('');
   const [playerModelMap, setPlayerModelMap] = useState<Record<string, string>>({});
+  const [isSpectator, setIsSpectator] = useState(false);
   
   // Initialize with null
   const [gameState, dispatch] = useReducer(gameReducer, null);
@@ -351,6 +352,14 @@ export default function Home() {
     
     // STALL: If trade is pending or bailout is pending or trade menu is open, pause AI.
     if (gameState.pendingTrade || gameState.pendingBailout || isTradeOpen) return;
+
+    console.log('AI Turn:', {
+      player: currentPlayer.name,
+      phase: gameState.gamePhase,
+      hasApiKey: !!groqApiKey,
+      hasModelMap: Object.keys(playerModelMap).length > 0,
+      modelId: playerModelMap[currentPlayer.id]
+    });
 
     // ... (rest of AI loop) ...
      const timer = setTimeout(() => {
@@ -533,33 +542,42 @@ export default function Home() {
      Note: I need to update the reducer definition above to handle INIT_GAME
   */
   
-  const handleStartGame = (models: string[], playerName: string, apiKey: string) => {
+  const handleStartGame = (models: string[], playerName: string, apiKey: string, spectatorMode: boolean = false) => {
       setSelectedAIModels(models);
       setGroqApiKey(apiKey);
+      setIsSpectator(spectatorMode);
       
       // Map complicated model IDs to simple names for display in game
       const nameMapping: Record<string, string> = {
           'llama-3.3-70b-versatile': 'Llama 3.3',
           'llama-3.1-8b-instant': 'Llama 8B',
-          'mixtral-8x7b-32768': 'Mixtral',
-          'gemma2-9b-it': 'Gemma 2',
-          'qwen-qwq-32b': 'Qwen QwQ',
-          'moonshotai/Kimi-K2-Instruct-0905': 'Kimi K2',
+          'openai/gpt-oss-120b': 'GPT-OSS 120B',
+          'openai/gpt-oss-20b': 'GPT-OSS 20B',
       };
 
       const aiNames = models.map(id => nameMapping[id] || id);
 
-      // We need to re-create state. 
-      // Since useReducer is static, we can dispatch a RESET action with new payload.
-      // But creating the state requires the engine function.
-      const newState = createInitialState([playerName, ...aiNames]);
+      // Create game state based on mode
+      let newState;
+      if (spectatorMode) {
+          // Spectator mode: All 4 players are AI
+          newState = createInitialState(aiNames);
+          // IMPORTANT: createInitialState sets index 0 as human (isAI: false)
+          // We need to manually set ALL players as AI in spectator mode
+          newState.players = newState.players.map(p => ({ ...p, isAI: true }));
+      } else {
+          // Normal mode: 1 human + 3 AI
+          newState = createInitialState([playerName, ...aiNames]);
+      }
       
       // Create mapping of player ID to model ID
       const modelMap: Record<string, string> = {};
       newState.players.forEach((player, index) => {
-          if (player.isAI && index > 0) {
-              // Map AI players to their respective models
-              modelMap[player.id] = models[index - 1] || 'llama-3.1-8b-instant';
+          if (player.isAI) {
+              // In spectator mode, all players are AI (index 0, 1, 2, 3)
+              // In normal mode, AI players start at index 1
+              const modelIndex = spectatorMode ? index : index - 1;
+              modelMap[player.id] = models[modelIndex] || 'llama-3.1-8b-instant';
           }
       });
       setPlayerModelMap(modelMap);
@@ -596,6 +614,7 @@ export default function Home() {
                     onChat={(msg) => dispatch({ type: 'CHAT', sender: 'Human', message: msg, color: gameState.players[0].color })}
                     onTradeClick={() => setIsTradeOpen(true)}
                     onPayFine={() => dispatch({ type: 'PAY_JAIL_FINE' })}
+                    isSpectator={isSpectator}
                 />
               </div>
           </div>
