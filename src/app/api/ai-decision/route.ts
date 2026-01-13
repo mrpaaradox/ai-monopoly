@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GroqAIService } from '@/lib/ai/groq-service';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {

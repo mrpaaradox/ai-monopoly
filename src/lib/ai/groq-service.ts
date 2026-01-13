@@ -15,28 +15,16 @@ export const MODEL_CONFIGS = {
     strategy: 'You are a balanced player who carefully weighs risks and rewards. You maintain a healthy cash reserve while building your property portfolio.',
     temperature: 0.6,
   },
-  'mixtral-8x7b-32768': {
-    name: 'Mixtral',
-    personality: 'conservative and cautious',
-    strategy: 'You are a conservative player who prioritizes cash reserves and only buys properties when you have a significant buffer. You avoid risky trades.',
-    temperature: 0.4,
-  },
-  'gemma2-9b-it': {
-    name: 'Gemma 2',
-    personality: 'opportunistic and tactical',
-    strategy: 'You are an opportunistic player who looks for good deals and strategic positions. You are willing to trade aggressively to complete monopolies.',
-    temperature: 0.7,
-  },
-  'qwen-qwq-32b': {
-    name: 'Qwen QwQ',
+  'openai/gpt-oss-120b': {
+    name: 'GPT-OSS 120B',
     personality: 'analytical and methodical',
-    strategy: 'You are a highly analytical player who excels at complex reasoning. You carefully evaluate each decision using mathematical logic and probability theory.',
+    strategy: 'You are a highly analytical player with advanced reasoning capabilities. You excel at complex problem-solving and make data-driven decisions based on probability and expected value.',
     temperature: 0.5,
   },
-  'moonshotai/Kimi-K2-Instruct-0905': {
-    name: 'Kimi K2',
-    personality: 'adaptive and intelligent',
-    strategy: 'You are an agentic player with advanced reasoning capabilities. You adapt your strategy dynamically based on game state and opponent behavior.',
+  'openai/gpt-oss-20b': {
+    name: 'GPT-OSS 20B',
+    personality: 'adaptive and efficient',
+    strategy: 'You are an efficient player optimized for cost-effective decisions. You adapt your strategy dynamically based on game state and opponent behavior, focusing on agentic workflows.',
     temperature: 0.65,
   },
 } as const;
@@ -74,7 +62,7 @@ export class GroqAIService {
         messages: [
           {
             role: "system",
-            content: `You are playing Monopoly. ${config.strategy}\n\nYou must respond in JSON format: {"decision": "BUY" or "PASS", "reasoning": "brief explanation"}`
+            content: `You are playing Monopoly. ${config.strategy}\n\nRespond with either "BUY" or "PASS" followed by a brief reason.`
           },
           {
             role: "user",
@@ -83,16 +71,25 @@ export class GroqAIService {
         ],
         model: modelId,
         temperature: config.temperature,
-        max_tokens: 150,
-        response_format: { type: "json_object" }
+        max_tokens: 300,
       });
 
-      const response = completion.choices[0]?.message?.content || '{"decision": "PASS", "reasoning": "Error"}';
-      const parsed = JSON.parse(response);
+      const content = completion.choices[0]?.message?.content;
+      
+      if (!content) {
+        console.error(`[Groq] Empty content for ${modelId}`, completion);
+        return this.fallbackBuyDecision(player, currentTile);
+      }
+
+      const response = content;
+      
+      // Parse response flexibly
+      const decision = response.toUpperCase().includes('BUY') ? 'BUY' : 'PASS';
+      const reasoning = response.replace(/^(BUY|PASS)/i, '').trim() || 'No reasoning provided';
       
       return {
-        decision: parsed.decision === 'BUY' ? 'BUY' : 'PASS',
-        reasoning: parsed.reasoning || 'No reasoning provided'
+        decision,
+        reasoning
       };
     } catch (error) {
       console.error('Groq API error:', error);
@@ -122,7 +119,7 @@ export class GroqAIService {
         messages: [
           {
             role: "system",
-            content: `You are playing Monopoly. ${config.strategy}\n\nYou must respond in JSON format: {"shouldTrade": true/false, "offerAmount": number, "reasoning": "brief explanation"}`
+            content: `You are playing Monopoly. ${config.strategy}\n\nRespond with YES or NO for trading, followed by an offer amount if yes, and a brief reason.`
           },
           {
             role: "user",
@@ -131,21 +128,32 @@ export class GroqAIService {
         ],
         model: modelId,
         temperature: config.temperature,
-        max_tokens: 200,
-        response_format: { type: "json_object" }
+        max_tokens: 300,
       });
 
-      const response = completion.choices[0]?.message?.content || '{"shouldTrade": false, "offerAmount": 0, "reasoning": "Error"}';
-      const parsed = JSON.parse(response);
+      const content = completion.choices[0]?.message?.content;
+      
+      if (!content) {
+        console.error(`[Groq] Empty content for ${modelId}`, completion);
+        return this.fallbackTradeDecision(player, targetProperty);
+      }
+
+      const response = content;
+      
+      // Parse response flexibly
+      const shouldTrade = response.toUpperCase().includes('YES');
+      const offerMatch = response.match(/\$(\d+)|\b(\d+)\s*dollars?/i);
+      const offerAmount = offerMatch ? parseInt(offerMatch[1] || offerMatch[2]) : 0;
+      const reasoning = response.replace(/^(YES|NO)/i, '').trim() || 'No reasoning provided';
       
       return {
-        shouldTrade: parsed.shouldTrade === true,
-        offerAmount: Math.min(parsed.offerAmount || 0, player.money),
-        reasoning: parsed.reasoning || 'No reasoning provided'
+        shouldTrade,
+        offerAmount: Math.min(offerAmount, player.money),
+        reasoning
       };
     } catch (error) {
       console.error('Groq API error:', error);
-      return { shouldTrade: false, offerAmount: 0, reasoning: 'API error' };
+      return this.fallbackTradeDecision(player, targetProperty);
     }
   }
 
@@ -260,5 +268,12 @@ Your ${config.personality} style suggests ${config.temperature > 0.7 ? 'aggressi
       decision: 'PASS',
       reasoning: 'Fallback: Insufficient funds'
     };
+  }
+  private fallbackTradeDecision(player: Player, targetProperty: Tile): {
+    shouldTrade: boolean;
+    offerAmount: number;
+    reasoning: string;
+  } {
+    return { shouldTrade: false, offerAmount: 0, reasoning: "Fallback: AI unavailable" };
   }
 }

@@ -19,9 +19,10 @@ interface GameOverlayProps {
   onChat: (msg: string) => void;
   onTradeClick: () => void;
   onPayFine: () => void;
+  isSpectator?: boolean;
 }
 
-export function GameOverlay({ gameState, onRoll, onBuy, onPass, onNextTurn, onChat, onTradeClick, onPayFine }: GameOverlayProps) {
+export function GameOverlay({ gameState, onRoll, onBuy, onPass, onNextTurn, onChat, onTradeClick, onPayFine, isSpectator = false }: GameOverlayProps) {
   const currentPlayer = gameState.players[gameState.currentPlayerIndex];
   const logsEndRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -74,7 +75,8 @@ export function GameOverlay({ gameState, onRoll, onBuy, onPass, onNextTurn, onCh
                    </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+                {!isSpectator && (
+                  <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
                     {gameState.gamePhase === 'ROLL' && (
                         currentPlayer.isJailed ? (
                              <>
@@ -112,7 +114,14 @@ export function GameOverlay({ gameState, onRoll, onBuy, onPass, onNextTurn, onCh
                     <Button onClick={onTradeClick} variant="outline" className="w-full col-span-2 border-slate-300" disabled={currentPlayer.isAI}>
                         Trade Deals
                     </Button>
-                </div>
+                  </div>
+                )}
+                
+                {isSpectator && (
+                  <div className="text-center py-4 text-sm text-muted-foreground italic">
+                    🎭 Spectator Mode - AI agents playing automatically
+                  </div>
+                )}
             </CardContent>
         </Card>
 
