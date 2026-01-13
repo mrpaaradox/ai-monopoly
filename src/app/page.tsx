@@ -273,8 +273,9 @@ const AI_DELAY = 1000;
 
 export default function Home() {
   const [setupComplete, setSetupComplete] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [selectedAIModels, setSelectedAIModels] = useState<string[]>([]);
+  const [groqApiKey, setGroqApiKey] = useState<string>('');
+  const [playerModelMap, setPlayerModelMap] = useState<Record<string, string>>({});
   
   // Initialize with null
   const [gameState, dispatch] = useReducer(gameReducer, null);
@@ -357,22 +358,55 @@ export default function Home() {
             dispatch({ type: 'ROLL' });
         } else if (gameState.gamePhase === 'ACTION') {
             const tile = gameState.board[currentPlayer.position];
-            // AI Decision: Buy if money > price + 100 buffer.
+            // AI Decision: Use Groq API for intelligent decisions
             if ((['PROPERTY', 'RAILROAD', 'UTILITY'].includes(tile.type)) && !tile.ownerId && tile.price) {
-                if (currentPlayer.money >= tile.price + 50) {
-                    dispatch({ type: 'BUY' });
-                    // Simulate different personalities based on name?
-                    const msgs = [
-                        `Acquiring ${tile.name} to diversify my portfolio.`,
-                        `Buying ${tile.name}. It's a strategic asset.`,
-                        `Small investment in ${tile.name}.`,
-                        `I'll take ${tile.name}, thanks.`
-                    ];
-                    dispatch({ type: 'CHAT', sender: currentPlayer.name, message: msgs[Math.floor(Math.random() * msgs.length)], color: currentPlayer.color });
-                } else {
-                     dispatch({ type: 'PASS' });
-                     dispatch({ type: 'CHAT', sender: currentPlayer.name, message: `Passing on ${tile.name} for now. too pricey.`, color: currentPlayer.color });
-                }
+                // Get the model ID for this player
+                const modelId = playerModelMap[currentPlayer.id] || 'llama-3.1-8b-instant';
+                
+                // Call Groq API for decision
+                fetch('/api/ai-decision', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        apiKey: groqApiKey,
+                        action: 'BUY_DECISION',
+                        context: {
+                            gameState,
+                            player: currentPlayer,
+                            currentTile: tile,
+                            modelId
+                        }
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.decision === 'BUY') {
+                        dispatch({ type: 'BUY' });
+                        dispatch({ 
+                            type: 'CHAT', 
+                            sender: currentPlayer.name, 
+                            message: data.reasoning || `Buying ${tile.name}!`, 
+                            color: currentPlayer.color 
+                        });
+                    } else {
+                        dispatch({ type: 'PASS' });
+                        dispatch({ 
+                            type: 'CHAT', 
+                            sender: currentPlayer.name, 
+                            message: data.reasoning || `Passing on ${tile.name}.`, 
+                            color: currentPlayer.color 
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('AI decision error:', error);
+                    // Fallback to simple logic
+                    if (currentPlayer.money >= (tile.price || 0) + 50) {
+                        dispatch({ type: 'BUY' });
+                    } else {
+                        dispatch({ type: 'PASS' });
+                    }
+                });
             } else {
                  dispatch({ type: 'PASS' });
             }
@@ -489,7 +523,7 @@ export default function Home() {
         }
     }, AI_DELAY);
     return () => clearTimeout(timer);
-  }, [gameState, setupComplete, isTradeOpen]);
+  }, [gameState, setupComplete, isTradeOpen, groqApiKey, playerModelMap]);
 
 
   
@@ -499,8 +533,9 @@ export default function Home() {
      Note: I need to update the reducer definition above to handle INIT_GAME
   */
   
-  const handleStartGame = (models: string[], playerName: string) => {
+  const handleStartGame = (models: string[], playerName: string, apiKey: string) => {
       setSelectedAIModels(models);
+      setGroqApiKey(apiKey);
       
       // Map complicated model IDs to simple names for display in game
       const nameMapping: Record<string, string> = {
@@ -508,9 +543,8 @@ export default function Home() {
           'llama-3.1-8b-instant': 'Llama 8B',
           'mixtral-8x7b-32768': 'Mixtral',
           'gemma2-9b-it': 'Gemma 2',
-          'deepseek-r1-distill-llama-70b': 'DeepSeek R1',
-          'qwen-2.5-32b': 'Qwen',
-          'moonshot-v1-8k': 'Moonshot'
+          'qwen-qwq-32b': 'Qwen QwQ',
+          'moonshotai/Kimi-K2-Instruct-0905': 'Kimi K2',
       };
 
       const aiNames = models.map(id => nameMapping[id] || id);
@@ -519,6 +553,17 @@ export default function Home() {
       // Since useReducer is static, we can dispatch a RESET action with new payload.
       // But creating the state requires the engine function.
       const newState = createInitialState([playerName, ...aiNames]);
+      
+      // Create mapping of player ID to model ID
+      const modelMap: Record<string, string> = {};
+      newState.players.forEach((player, index) => {
+          if (player.isAI && index > 0) {
+              // Map AI players to their respective models
+              modelMap[player.id] = models[index - 1] || 'llama-3.1-8b-instant';
+          }
+      });
+      setPlayerModelMap(modelMap);
+      
       // We need an action to REPLACE state.
       // I'll update the reducer first.
       dispatch({ type: 'INIT_GAME', payload: newState });

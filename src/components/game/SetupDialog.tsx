@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 
 interface SetupDialogProps {
-  onStart: (selectedModels: string[], playerName: string) => void;
+  onStart: (selectedModels: string[], playerName: string, apiKey: string) => void;
 }
 
 const AVAILABLE_MODELS = [
@@ -12,14 +12,14 @@ const AVAILABLE_MODELS = [
   { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', category: 'Speed' },
   { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', category: 'Balanced' },
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B', category: 'Google' },
-  { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 70B', category: 'Analytical' },
-  { id: 'qwen-2.5-32b', name: 'Qwen 2.5 32B', category: 'Multilingual' },
-  { id: 'moonshot-v1-8k', name: 'Moonshot Kimi', category: 'Creative' },
+  { id: 'qwen-qwq-32b', name: 'Qwen QwQ 32B', category: 'Reasoning' },
+  { id: 'moonshotai/Kimi-K2-Instruct-0905', name: 'Kimi K2', category: 'Agentic' },
 ];
 
 export function SetupDialog({ onStart }: SetupDialogProps) {
-    const [selectedModels, setSelectedModels] = useState<string[]>(['llama-3.3-70b-versatile', 'deepseek-r1-distill-llama-70b', 'qwen-2.5-32b']);
+    const [selectedModels, setSelectedModels] = useState<string[]>(['llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'gemma2-9b-it']);
     const [playerName, setPlayerName] = useState("Human");
+    const [apiKey, setApiKey] = useState("");
 
     const toggleModel = (id: string) => {
         if (selectedModels.includes(id)) {
@@ -45,6 +45,20 @@ export function SetupDialog({ onStart }: SetupDialogProps) {
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="py-6 space-y-6">
+                    <div className="space-y-2">
+                        <label className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Groq API Key</label>
+                        <Input 
+                            type="password"
+                            value={apiKey} 
+                            onChange={(e) => setApiKey(e.target.value)} 
+                            className="bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-lg font-mono"
+                            placeholder="gsk_..."
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            Get your free API key at <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline">console.groq.com</a>
+                        </p>
+                    </div>
+
                     <div className="space-y-2">
                         <label className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Your Name</label>
                         <Input 
@@ -96,8 +110,8 @@ export function SetupDialog({ onStart }: SetupDialogProps) {
                     </div>
                     <Button 
                         size="lg" 
-                        onClick={() => onStart(selectedModels, playerName || "Human")} 
-                        disabled={selectedModels.length !== 3 || !playerName.trim()}
+                        onClick={() => onStart(selectedModels, playerName || "Human", apiKey)} 
+                        disabled={selectedModels.length !== 3 || !playerName.trim() || !apiKey.trim()}
                         className="font-bold text-lg px-8 bg-indigo-600 hover:bg-indigo-700 shadow-lg hover:shadow-xl transition-all"
                     >
                         Start Game

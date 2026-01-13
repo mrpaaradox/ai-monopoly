@@ -30,8 +30,6 @@ chmod +x setup.sh
 The script will:
 - ✅ Check for Node.js and npm
 - ✅ Install all dependencies
-- ✅ Prompt you for your Groq API key
-- ✅ Create the `.env.local` file automatically
 - ✅ Get you ready to play!
 
 ### Manual Setup
@@ -43,7 +41,8 @@ If you prefer to set up manually:
 Before you begin, ensure you have the following installed:
 - **Node.js** (v18 or higher)
 - **npm** or **yarn** package manager
-- A **Groq API Key** (get one free at [console.groq.com](https://console.groq.com))
+
+You'll also need a **Groq API Key** (get one free at [console.groq.com](https://console.groq.com))
 
 #### Installation
 
@@ -58,26 +57,18 @@ Before you begin, ensure you have the following installed:
    npm install
    ```
 
-3. **Set up environment variables**
-   
-   Create a `.env.local` file in the root directory:
-   ```bash
-   cp .env.sample .env.local
-   ```
-   
-   Then edit `.env.local` and add your Groq API key:
-   ```env
-   GROQ_API_KEY=your_groq_api_key_here
-   ```
-
-4. **Run the development server**
+3. **Run the development server**
    ```bash
    npm run dev
    ```
 
-5. **Open your browser**
+4. **Open your browser**
    
-   Navigate to [http://localhost:3000](http://localhost:3000) to start playing!
+   Navigate to [http://localhost:3000](http://localhost:3000)
+
+5. **Enter your API key**
+   
+   When the setup dialog appears, enter your Groq API key to start playing!
 
 ### How to Play
 
