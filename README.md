@@ -11,11 +11,87 @@ A modern, AI-powered reimplementation of the classic board game, featuring autom
 - **Live Chat**: AI players "chat" about their moves and strategies.
 - **ShadCN Aesthetics**: Clean, dark/light mode compatible design.
 
+## Getting Started
+
+### Quick Setup (Recommended)
+
+Run the automated setup script:
+
+```bash
+./setup.sh
+```
+
+**If you get a permission denied error**, run this first:
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+The script will:
+- ✅ Check for Node.js and npm
+- ✅ Install all dependencies
+- ✅ Prompt you for your Groq API key
+- ✅ Create the `.env.local` file automatically
+- ✅ Get you ready to play!
+
+### Manual Setup
+
+If you prefer to set up manually:
+
+#### Prerequisites
+
+Before you begin, ensure you have the following installed:
+- **Node.js** (v18 or higher)
+- **npm** or **yarn** package manager
+- A **Groq API Key** (get one free at [console.groq.com](https://console.groq.com))
+
+#### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd ai-monopoly
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Set up environment variables**
+   
+   Create a `.env.local` file in the root directory:
+   ```bash
+   cp .env.sample .env.local
+   ```
+   
+   Then edit `.env.local` and add your Groq API key:
+   ```env
+   GROQ_API_KEY=your_groq_api_key_here
+   ```
+
+4. **Run the development server**
+   ```bash
+   npm run dev
+   ```
+
+5. **Open your browser**
+   
+   Navigate to [http://localhost:3000](http://localhost:3000) to start playing!
+
+### How to Play
+
+- As the **Human** player, click **"Roll Dice"** to start your turn
+- When you land on a property, choose to **Buy** or **Skip**
+- Click **"End Turn"** when you're done
+- Watch the AI players take their turns automatically
+- View AI banter and strategy in the **Chat Log**
+
 ## How It Works
 
 The game is driven by a `GameEngine` state machine. 
 - **Human Player**: Controls the first player.
-- **AI Players**: Automonously execute moves after a short delay to simulate "thinking".
+- **AI Players**: Autonomously execute moves after a short delay to simulate "thinking".
 
 ## Tech Stack
 
@@ -23,3 +99,4 @@ The game is driven by a `GameEngine` state machine.
 - **Styling**: Tailwind CSS v4
 - **Components**: ShadCN / Lucide Icons
 - **State Management**: React useReducer + Custom Engine
+- **AI**: Groq API (Llama models)
